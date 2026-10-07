@@ -38,6 +38,7 @@ Live site (after deploy): `https://<your-github-user>.github.io/Performance_stat
 - Formulas that point below an inserted row (in any sheet) are rewritten, so they keep pointing at the same cells.
 - An Emp ID that already has a sheet is skipped. Sheet names are cleaned to fit Excel's rules (max 31 characters, no `[]:*?/\`).
 - Excel recalculates all formulas when the file is opened.
+- Excel Tables (like the `Mail` table in `Sheet1`) and their formats are copied back from your original file after saving. The Excel library used here would otherwise damage them, and Excel would show a "Removed Records" repair prompt.
 
 ---
 
@@ -54,6 +55,7 @@ src/
     employees.js         Creates employee sheets, validates IDs, reads employee lists
     monthlyFill.js       Monthly fill: performance file -> stats rows (by label)
     matcher.js           Suggests sheet -> process matches by name similarity
+    preserve.js          Copies Excel Tables + table formats back after saving
     pipeline.js          analyzeStats() and applyChanges(): the one entry point
   worker/excel.worker.js Runs the pipeline in a Web Worker (the page never freezes)
   lib/excelWorker.js     Promise wrapper for the worker, download helper
@@ -63,7 +65,7 @@ src/
 
 **Data flow:** File → Web Worker (ExcelJS) → `analyzeStats` → the UI shows the structure. Your changes are kept as a list in the UI. **Apply** sends them to the worker, which runs `applyChanges` in a fixed order (insert rows → create employee sheets → monthly fill), saves the file, and sends it back for download.
 
-**Stack:** React 19, Vite, ExcelJS, Vitest. There is no backend.
+**Stack:** React 19, Vite, ExcelJS, fflate (zip), Vitest. There is no backend.
 
 ---
 

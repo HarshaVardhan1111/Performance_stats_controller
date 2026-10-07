@@ -5,6 +5,7 @@ import ExcelJS from 'exceljs';
 import { analyzeStats, applyChanges } from '../core/pipeline.js';
 import { analyzePerformance } from '../core/monthlyFill.js';
 import { parseEmployeeList } from '../core/employees.js';
+import { readPreservedParts, restoreParts } from '../core/preserve.js';
 
 let statsBuffer = null;
 let perfBuffer = null;
@@ -42,6 +43,7 @@ const handlers = {
   async apply(changes, progress) {
     if (!statsBuffer) throw new Error('Load a Team Level Stats file first.');
     progress('Opening stats file…');
+    const preserved = readPreservedParts(statsBuffer);
     const wb = await open(statsBuffer);
     let perfWorkbook;
     let perfInfo;
@@ -53,7 +55,10 @@ const handlers = {
     }
     const summary = applyChanges(wb, changes, { perfWorkbook, perfInfo, log: progress });
     progress('Writing the updated file…');
-    const out = toArrayBuffer(await wb.xlsx.writeBuffer());
+    const written = await wb.xlsx.writeBuffer();
+    const { bytes, restored } = restoreParts(written, preserved);
+    if (restored.length) progress(`Kept Excel tables and formats intact (${restored.length} part(s))`);
+    const out = toArrayBuffer(bytes);
     statsBuffer = out.slice(0); // keep editing the updated file next time
     const analysis = analyzeStats(wb);
     return { result: { summary, analysis, buffer: out }, transfer: [out] };

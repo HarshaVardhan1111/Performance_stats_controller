@@ -10,13 +10,16 @@ export function hexToArgb(hex) {
   return /^[0-9A-F]{6}$/.test(clean) ? `FF${clean}` : null;
 }
 
-/** Sheets whose column A differs from the template are unsafe to change. */
-export function findLayoutMismatches(template, sheets, lastRow) {
+/** Splits sheets into those whose column A matches the template and the rest. */
+export function splitByLayout(template, sheets, lastRow) {
   const expected = labelKeys(template, lastRow);
-  return sheets.filter((ws) => {
+  const matching = [];
+  const different = [];
+  for (const ws of sheets) {
     const actual = labelKeys(ws, lastRow);
-    return actual.some((k, i) => k !== expected[i]);
-  });
+    (actual.every((k, i) => k === expected[i]) ? matching : different).push(ws);
+  }
+  return { matching, different };
 }
 
 function insertIntoSheet(ws, { at, labels, color, styleCols }) {
@@ -45,7 +48,7 @@ function insertIntoSheet(ws, { at, labels, color, styleCols }) {
 /**
  * inserts: [{ at, labels: string[], color: '#RRGGBB' }] - `at` is a row number
  * in the ORIGINAL layout (new rows go above that row).
- * targets: worksheets to change (template + employee sheets).
+ * targets: worksheets to change (template + every sheet with the same layout).
  */
 export function applyInsertions(workbook, { inserts, targets, styleCols, log = () => {} }) {
   if (!inserts.length) return { rowsAdded: 0, formulasUpdated: 0 };

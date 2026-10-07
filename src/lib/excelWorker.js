@@ -28,16 +28,29 @@ function getWorker() {
   return worker;
 }
 
+let queue = Promise.resolve();
+
+/** Runs one task in the worker. Tasks run one at a time, in order. */
 export function runTask(type, payload, { onProgress, transfer = [] } = {}) {
-  const id = ++seq;
-  return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject, onProgress });
-    getWorker().postMessage({ id, type, payload }, transfer);
-  });
+  const task = queue.then(
+    () =>
+      new Promise((resolve, reject) => {
+        const id = ++seq;
+        pending.set(id, { resolve, reject, onProgress });
+        getWorker().postMessage({ id, type, payload }, transfer);
+      }),
+  );
+  queue = task.catch(() => {});
+  return task;
 }
 
+const MAX_BYTES = 60 * 1024 * 1024;
+
 export async function readFile(file) {
+  if (/\.(xls|xlsm|xlsb|csv)$/i.test(file.name)) throw new Error(`“${file.name}” is not an .xlsx file. Save it as Excel Workbook (.xlsx) and try again.`);
   if (!/\.xlsx$/i.test(file.name)) throw new Error('Please choose an .xlsx Excel file.');
+  if (file.size === 0) throw new Error(`“${file.name}” is empty.`);
+  if (file.size > MAX_BYTES) throw new Error(`“${file.name}” is too large (over 60 MB) to process in the browser.`);
   return file.arrayBuffer();
 }
 

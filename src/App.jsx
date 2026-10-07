@@ -5,29 +5,10 @@ import FileBar from './components/FileBar.jsx';
 import Icon from './components/Icon.jsx';
 import ProcessesTab from './components/ProcessesTab.jsx';
 import EmployeesTab from './components/EmployeesTab.jsx';
-import MonthlyFillTab from './components/MonthlyFillTab.jsx';
 import { ApplyBar, LogPanel, ResultCard } from './components/RunPanel.jsx';
 import { downloadBuffer, readFile, runTask, storage, updatedFileName } from './lib/excelWorker.js';
-import { suggestTarget } from './core/matcher.js';
 
-const MAP_STORE = 'stats-controller:fill-mappings';
 let uidSeq = 0;
-
-function computeMappings(perfInfo, targets, previous = {}) {
-  const keys = new Set(targets.map((t) => t.key));
-  const saved = storage.get(MAP_STORE, {});
-  const out = {};
-  for (const s of perfInfo.sheets) {
-    const prev = previous[s.name];
-    if (prev && (prev.key === '' || keys.has(prev.key)) && prev.source) out[s.name] = prev;
-    else if (saved[s.name] !== undefined && (saved[s.name] === '' || keys.has(saved[s.name]))) out[s.name] = { key: saved[s.name], source: 'saved' };
-    else {
-      const hit = suggestTarget(s.name, targets);
-      out[s.name] = hit ? { key: hit.key, source: 'auto' } : { key: '', source: null };
-    }
-  }
-  return out;
-}
 
 const now = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -41,17 +22,10 @@ export default function App() {
   const [inserts, setInserts] = useState([]);
   const [employees, setEmployees] = useState([]);
 
-  const [perf, setPerf] = useState(null); // { fileName, info }
-  const [perfBusy, setPerfBusy] = useState(false);
-  const [perfError, setPerfError] = useState(null);
-  const [month, setMonth] = useState(() => ((new Date().getMonth() + 11) % 12) + 1); // last month
-  const [mappings, setMappings] = useState({});
-  const [fillOn, setFillOn] = useState(false);
-
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState([]);
   const [result, setResult] = useState(null);
-  const lastOutput = useRef(null);
+  const fileBytes = useRef(null); // the current workbook; the worker keeps no copy
   const replaceInput = useRef(null);
 
   useEffect(() => {
@@ -63,7 +37,7 @@ export default function App() {
 
   const addLog = useCallback((message, level = 'info') => setLog((l) => [...l, { message, level, time: now() }]), []);
 
-  const pendingCount = inserts.length + employees.length + (fillOn && perf ? 1 : 0);
+  const pendingCount = inserts.length + employees.length;
 
   useEffect(() => {
     const warn = (e) => {
@@ -82,15 +56,14 @@ export default function App() {
     setError(null);
     try {
       const buffer = await readFile(file);
-      const size = buffer.byteLength;
-      const analysis = await runTask('loadStats', { buffer }, { transfer: [buffer] });
+      const copy = buffer.slice(0);
+      const analysis = await runTask('analyze', { buffer: copy }, { transfer: [copy] });
       if (!analysis.ok) throw new Error(analysis.error);
-      setStats({ fileName: file.name, size, version: 1, analysis });
+      fileBytes.current = buffer;
+      setStats({ fileName: file.name, size: buffer.byteLength, version: 1, analysis });
       setInserts([]);
       setEmployees([]);
       setResult(null);
-      setFillOn(false);
-      if (perf) setMappings((m) => computeMappings(perf.info, analysis.targets, m));
       addLog(`Loaded “${file.name}”: ${analysis.employees.length} employees, ${analysis.layout.groups.length} groups`, 'success');
     } catch (err) {
       setError(err.message);
@@ -98,31 +71,6 @@ export default function App() {
     } finally {
       setStatsBusy(false);
     }
-  };
-
-  const loadPerf = async (file) => {
-    setPerfBusy(true);
-    setPerfError(null);
-    try {
-      const buffer = await readFile(file);
-      const info = await runTask('loadPerformance', { buffer }, { transfer: [buffer] });
-      if (!info.sheets.length) throw new Error('No sheet in this file has an “Emp ID” column in row 1.');
-      setPerf({ fileName: file.name, info });
-      setMappings(computeMappings(info, stats.analysis.targets));
-      setFillOn(true);
-      addLog(`Loaded performance file “${file.name}” (${info.sheets.length} sheets)`, 'success');
-    } catch (err) {
-      setPerfError(err.message);
-    } finally {
-      setPerfBusy(false);
-    }
-  };
-
-  const setMapping = (sheetName, key) => {
-    setMappings((m) => ({ ...m, [sheetName]: { key, source: 'manual' } }));
-    const saved = storage.get(MAP_STORE, {});
-    saved[sheetName] = key;
-    storage.set(MAP_STORE, saved);
   };
 
   const readEmployeeList = async (file) => {
@@ -143,24 +91,16 @@ export default function App() {
     const changes = {
       inserts: inserts.map(({ at, labels, color }) => ({ at, labels, color })),
       employees: employees.map(({ id, name }) => ({ id, name })),
-      fill:
-        fillOn && perf
-          ? {
-              month,
-              mappings: Object.fromEntries(Object.entries(mappings).filter(([, m]) => m.key).map(([n, m]) => [n, { key: m.key }])),
-            }
-          : null,
     };
+    const copy = fileBytes.current.slice(0);
     try {
-      const out = await runTask('apply', changes, { onProgress: addLog });
+      const out = await runTask('apply', { buffer: copy, changes }, { onProgress: addLog, transfer: [copy] });
       const fileName = updatedFileName(stats.fileName);
-      lastOutput.current = { buffer: out.buffer, fileName };
+      fileBytes.current = out.buffer;
       downloadBuffer(out.buffer, fileName);
       setStats((s) => ({ ...s, size: out.buffer.byteLength, version: s.version + 1, analysis: out.analysis }));
-      if (perf) setMappings((m) => computeMappings(perf.info, out.analysis.targets, m));
       setInserts([]);
       setEmployees([]);
-      setFillOn(false);
       setResult({ summary: out.summary, fileName });
       addLog(`Saved “${fileName}”`, 'success');
     } catch (err) {
@@ -175,20 +115,18 @@ export default function App() {
     if (!window.confirm('Discard all pending changes?')) return;
     setInserts([]);
     setEmployees([]);
-    setFillOn(false);
   };
 
-  const counts = { inserts: inserts.length, employees: employees.length, fillMonth: fillOn && perf ? month : 0 };
+  const counts = { inserts: inserts.length, employees: employees.length };
   const lastMessage = log[log.length - 1]?.message;
-  const targetCount = stats ? stats.analysis.employees.length + 1 - stats.analysis.mismatched.length : 0;
+  const targetCount = stats?.analysis.targetCount ?? 0;
 
   const tabs = useMemo(
     () => [
       { id: 'processes', label: 'Processes', icon: 'layers', count: inserts.length },
       { id: 'employees', label: 'Employees', icon: 'users', count: employees.length },
-      { id: 'fill', label: 'Monthly fill', icon: 'calendar', count: fillOn && perf ? 1 : 0 },
     ],
-    [inserts.length, employees.length, fillOn, perf],
+    [inserts.length, employees.length],
   );
 
   return (
@@ -208,7 +146,7 @@ export default function App() {
         {!stats ? (
           <section className="hero">
             <h1>Update your Team Level Stats file</h1>
-            <p className="hero__lead">Insert process rows anywhere, add new employee sheets, and fill monthly numbers — all inside your browser.</p>
+            <p className="hero__lead">Insert process rows anywhere and add new employee sheets — all inside your browser.</p>
             <DropZone title="Drop the Team Level Stats file here" hint="or click to choose an .xlsx file" onFile={loadStats} busy={statsBusy} />
             <ul className="features">
               <li>
@@ -240,7 +178,7 @@ export default function App() {
               <ResultCard
                 result={result}
                 onDismiss={() => setResult(null)}
-                onDownload={() => lastOutput.current && downloadBuffer(lastOutput.current.buffer, lastOutput.current.fileName)}
+                onDownload={() => fileBytes.current && downloadBuffer(fileBytes.current, result.fileName)}
               />
             )}
 
@@ -282,26 +220,6 @@ export default function App() {
                   onReadList={readEmployeeList}
                 />
               )}
-              {tab === 'fill' && (
-                <MonthlyFillTab
-                  analysis={stats.analysis}
-                  perf={perf}
-                  perfBusy={perfBusy}
-                  perfError={perfError}
-                  onLoadPerf={loadPerf}
-                  month={month}
-                  onMonth={setMonth}
-                  mappings={mappings}
-                  onMapping={setMapping}
-                  enabled={fillOn}
-                  onEnabled={setFillOn}
-                  pendingEmployees={employees}
-                  onAddEmployees={(list) => {
-                    addEmployees(list);
-                    addLog(`${list.length} employee(s) from the performance file added to new sheets`, 'info');
-                  }}
-                />
-              )}
             </div>
 
             <LogPanel log={log} />
@@ -309,7 +227,7 @@ export default function App() {
         )}
       </main>
 
-      {stats && <ApplyBar counts={counts} running={running} lastMessage={lastMessage} onApply={apply} onReset={reset} />}
+      {stats && <ApplyBar counts={counts} running={running || statsBusy} lastMessage={lastMessage} onApply={apply} onReset={reset} />}
 
       <footer className="footer">
         <Icon name="lock" size={14} /> Files are processed locally in your browser and are never uploaded.

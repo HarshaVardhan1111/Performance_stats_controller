@@ -4,7 +4,7 @@ import DropZone from './DropZone.jsx';
 import { validateNewEmployee } from '../core/employees.js';
 import { cleanText } from '../core/text.js';
 
-const SOURCE = { manual: 'Typed', list: 'From list', performance: 'From performance file' };
+const SOURCE = { manual: 'Typed', list: 'From list' };
 
 export default function EmployeesTab({ existing, pending, onAdd, onRemove, onClear, onReadList }) {
   const [id, setId] = useState('');

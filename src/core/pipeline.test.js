@@ -3,8 +3,6 @@ import ExcelJS from 'exceljs';
 import { makeStatsBook, roundTrip } from './__fixtures__/statsBook.js';
 import { analyzeStats, applyChanges } from './pipeline.js';
 import { parseEmployeeList, validateNewEmployee } from './employees.js';
-import { analyzePerformance } from './monthlyFill.js';
-import { suggestTarget } from './matcher.js';
 
 const colA = (ws, from, to) => Array.from({ length: to - from + 1 }, (_, i) => ws.getCell(from + i, 1).value);
 
@@ -24,7 +22,8 @@ describe('analyzeStats', () => {
       { id: '10000002', sheetName: 'Test User Two' },
     ]);
     expect(a.otherSheets).toEqual(['Sheet1']);
-    expect(a.months[3]).toBe(4);
+    expect(a.targetCount).toBe(3);
+    expect(a.noIdSheets).toEqual([]);
   });
 
   it('rejects a workbook without REF', () => {
@@ -120,62 +119,58 @@ describe('new employees', () => {
   });
 });
 
-describe('monthly fill', () => {
-  function makePerfBook() {
-    const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet('Beta QC');
-    ws.addRows([
-      ['Emp ID', 'Name', 'Count', 'Avg', 'Cost', 'Extra'],
-      ['10000002', 'Test User Two', 12, 3.5, 7, 99],
-      ['10000099', 'Not In Stats', 1, 1, 1, 1],
-    ]);
-    ws.getCell('C2').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF0000' } };
-    const uti = wb.addWorksheet('Usage');
-    uti.addRows([['Emp ID', 'Name', 'Usage'], ['10000001', 'Test User One', 0.8]]);
-    return wb;
-  }
-
-  it('fills the chosen month by label, capped at the block size', async () => {
+describe('stability', () => {
+  it('also inserts into a sheet with the same rows but no Emp ID in A1', async () => {
     const wb = makeStatsBook();
-    const perf = makePerfBook();
-    const perfInfo = analyzePerformance(perf);
-    expect(perfInfo.sheets.map((s) => [s.name, s.headers.length])).toEqual([['Beta QC', 4], ['Usage', 1]]);
-
+    const noId = wb.addWorksheet('New Joiner');
+    wb.getWorksheet('Test User One').eachRow((row, r) => {
+      noId.getCell(r, 1).value = row.getCell(1).value;
+    });
+    noId.getCell('A1').value = null;
     const a = analyzeStats(wb);
-    const beta = a.targets.find((t) => t.label === 'Beta Trend');
-    const uti = a.targets.find((t) => t.label === 'Usage %');
-    expect(suggestTarget('Beta QC', a.targets).key).toBe(beta.key);
-
-    const s = applyChanges(
-      wb,
-      {
-        inserts: [{ at: 2, labels: ['Shift everything'], color: '#FFFFFF' }],
-        fill: { month: 8, mappings: { 'Beta QC': { key: beta.key }, Usage: { key: uti.key } } },
-      },
-      { perfWorkbook: perf, perfInfo },
-    );
-    expect(s.missing).toEqual([{ id: '10000099', name: 'Not In Stats' }]);
+    expect(a.noIdSheets).toEqual(['New Joiner']);
+    expect(a.targetCount).toBe(4);
+    applyChanges(wb, { inserts: [{ at: 6, labels: ['New'], color: '#FFFFFF' }] });
     const out = await roundTrip(wb);
-    const two = out.getWorksheet('Test User Two');
-    // Beta Trend moved from row 6 to 7; August is column I; block has 3 rows.
-    expect([two.getCell('I7').value, two.getCell('I8').value, two.getCell('I9').value]).toEqual([12, 3.5, 7]);
-    expect(two.getCell('I10').value).toBeNull(); // not past the block
-    expect(two.getCell('I7').fill.fgColor.argb).toBe('FFFF0000');
-    expect(out.getWorksheet('Test User One').getCell('I10').value).toBe(0.8);
+    expect(out.getWorksheet('New Joiner').getCell(6, 1).value).toBe('New');
+    expect(out.getWorksheet('Sheet1').getCell(6, 1).value).toBeNull();
   });
 
-  it('still finds a block when new rows without "Error Cost" are inserted right above it', async () => {
+  it('prefers an "Emp ID" column over a serial "No" column in a list', () => {
+    const wb = new ExcelJS.Workbook();
+    wb.addWorksheet('List').addRows([['No', 'Emp ID', 'Employee Name'], [1, 10000011, 'Eleven'], [2, 10000012, 'Twelve']]);
+    expect(parseEmployeeList(wb).employees).toEqual([{ id: '10000011', name: 'Eleven' }, { id: '10000012', name: 'Twelve' }]);
+  });
+
+  it('makes safe, unique sheet names from odd names', async () => {
     const wb = makeStatsBook();
-    const perf = makePerfBook();
-    const perfInfo = analyzePerformance(perf);
-    const beta = analyzeStats(wb).targets.find((t) => t.label === 'Beta Trend');
-    const s = applyChanges(
-      wb,
-      { inserts: [{ at: 6, labels: ['Loose row'], color: '#FFFFFF' }], fill: { month: 1, mappings: { 'Beta QC': { key: beta.key } } } },
-      { perfWorkbook: perf, perfInfo },
-    );
-    expect(s.cellsFilled).toBe(3);
-    const two = (await roundTrip(wb)).getWorksheet('Test User Two');
-    expect([two.getCell('B7').value, two.getCell('B8').value, two.getCell('B9').value]).toEqual([12, 3.5, 7]);
+    const s = applyChanges(wb, {
+      employees: [
+        { id: '10000021', name: 'A/B: C*?[x]' },
+        { id: '10000022', name: 'Test User One' },
+        { id: '10000023', name: 'A very long employee name that goes past thirty one chars' },
+      ],
+    });
+    const names = s.sheetsCreated.map((c) => c.sheetName);
+    expect(names[0]).toBe('A B C x');
+    expect(names[1]).toBe('Test User One (2)');
+    expect(names[2].length).toBeLessThanOrEqual(31);
+    const out = await roundTrip(wb);
+    expect(out.getWorksheet('Test User One (2)').getCell('A1').value).toBe('10000022');
+  });
+
+  it('can apply twice in a row (second run builds on the first)', async () => {
+    const once = await roundTrip(makeStatsBook());
+    applyChanges(once, { inserts: [{ at: 9, labels: ['First run'], color: '#FFFFFF' }] });
+    const twice = await roundTrip(once);
+    const a = analyzeStats(twice);
+    expect(a.layout.lastRow).toBe(13);
+    applyChanges(twice, { inserts: [{ at: a.layout.lastRow + 1, labels: ['At the end'], color: '#FFFFFF' }] });
+    const out = await roundTrip(twice);
+    for (const name of ['REF', 'Test User One', 'Test User Two']) {
+      expect(out.getWorksheet(name).getCell(9, 1).value).toBe('First run');
+      expect(out.getWorksheet(name).getCell(14, 1).value).toBe('At the end');
+    }
+    expect(out.getWorksheet('Test User One').getCell('C3').value.formula).toBe('B7/B10');
   });
 });

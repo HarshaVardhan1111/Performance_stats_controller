@@ -80,16 +80,22 @@ function reorderAfterLastEmployee(workbook, existing, created) {
  */
 export function parseEmployeeList(workbook) {
   for (const ws of workbook.worksheets) {
+    // Prefer an explicit "Emp ID"/"Employee Name" header over a plain "ID"/"No"/"Name".
     let idCol = null;
     let nameCol = null;
     let headerRow = 0;
+    const ID_STRONG = /^(emp|employee)(id|no|number|code)$/;
+    const ID_WEAK = /^(id|empno)$/;
     for (let r = 1; r <= Math.min(10, ws.rowCount) && !idCol; r += 1) {
-      ws.getRow(r).eachCell((cell, c) => {
-        const k = normKey(valueText(cell.value)).replace(/[\s_.-]/g, '');
-        if (!idCol && /^(emp|employee)?(id|no|number|code)$/.test(k)) idCol = c;
-        if (!nameCol && /name$/.test(k)) nameCol = c;
-      });
-      if (idCol) headerRow = r;
+      const keys = [];
+      ws.getRow(r).eachCell((cell, c) => keys.push([c, normKey(valueText(cell.value)).replace(/[\s_.-]/g, '')]));
+      const strong = keys.find(([, k]) => ID_STRONG.test(k));
+      const weak = keys.find(([, k]) => ID_WEAK.test(k));
+      idCol = (strong ?? weak)?.[0] ?? null;
+      if (idCol) {
+        headerRow = r;
+        nameCol = (keys.find(([, k]) => /^(emp|employee)?(full)?name$/.test(k)) ?? keys.find(([c, k]) => c !== idCol && /name/.test(k)))?.[0] ?? null;
+      }
     }
     if (!idCol) {
       idCol = 1;

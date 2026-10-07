@@ -36,7 +36,12 @@ export default function FileBar({ stats, onReplace, busy }) {
         </span>
         {analysis.mismatched.length > 0 && (
           <span className="chip chip--warn" title={analysis.mismatched.join(', ')}>
-            <Icon name="alert" size={14} /> {analysis.mismatched.length} sheet(s) differ from {analysis.templateName}
+            <Icon name="alert" size={14} /> {analysis.mismatched.length} sheet(s) differ from {analysis.templateName} — skipped
+          </span>
+        )}
+        {analysis.noIdSheets.length > 0 && (
+          <span className="chip chip--warn" title={analysis.noIdSheets.join(', ')}>
+            <Icon name="alert" size={14} /> {analysis.noIdSheets.length} sheet(s) have no Emp ID in A1
           </span>
         )}
       </div>

@@ -4,11 +4,10 @@ A browser tool for the **Team Level Stats** Excel workbook. With it you can:
 
 - **Insert process rows anywhere**: at any position, with any number of rows. The rows are added to `REF` and every employee sheet, and formulas are corrected.
 - **Add employees**: type an Emp ID and name, or drop an employee list. Each new sheet is a copy of `REF`.
-- **Monthly fill**: copy each person's numbers from the monthly performance file into the right rows and month column.
 
 **Privacy:** everything runs inside your browser. Files are never uploaded, and the code contains no employee data and no process names. Everything is read from the file you drop in.
 
-Live site (after deploy): `https://<your-github-user>.github.io/Performance_stats_controller/`
+Live site: https://harshavardhan1111.github.io/Performance_stats_controller/
 
 ---
 
@@ -18,7 +17,6 @@ Live site (after deploy): `https://<your-github-user>.github.io/Performance_stat
 2. Pick a tab:
    - **Processes**: open a process and hover between two rows (on a phone, tap the faint line), then click **Insert here**. Enter the title and as many rows as you need (type them, paste a list, or press **Standard rows**). Pick a colour. Tip: end a process with an `Error Cost $` row so the app shows it as its own block.
    - **Employees**: type an Emp ID and name, then press **Add**. To add many people at once, drop an Excel list with `Emp ID` and `Name` columns. Only people who don't have a sheet yet are picked. Existing sheets are never deleted.
-   - **Monthly fill**: drop the performance file, choose the month, and check which sheet goes to which process. Matches are suggested from the names, and your choices are remembered in your browser.
 3. Click **Apply & download**. You get `<file name> (updated).xlsx`. You can keep making changes, and the next run starts from the updated file.
 
 ### What the app expects in the workbook
@@ -28,16 +26,17 @@ Live site (after deploy): `https://<your-github-user>.github.io/Performance_stat
 | Template | A sheet named `REF` |
 | Employee sheets | Emp ID (digits) in cell `A1` |
 | Row labels | Column A, starting at row 2 |
-| Months | Dates in row 1 (if none, column B = Jan … M = Dec) |
 | Process blocks | Each block ends with a row starting `Error Cost` |
-| Performance file | One sheet per process, `Emp ID` (and optionally `Name`) in row 1, numbers in the next columns in row order |
 
 ### Safety checks
 
-- Every insert is applied to `REF` and **all** employee sheets the same way. A sheet whose column A doesn't match `REF` is **skipped and reported**, never changed blindly.
+- Every insert is applied to `REF` and **every sheet whose column A matches `REF`**, even one with an empty `A1`, so no sheet drifts out of line. An employee sheet whose column A doesn't match `REF` is **skipped and reported**, never changed blindly.
 - Formulas that point below an inserted row (in any sheet) are rewritten, so they keep pointing at the same cells.
 - An Emp ID that already has a sheet is skipped. Sheet names are cleaned to fit Excel's rules (max 31 characters, no `[]:*?/\`).
 - Excel recalculates all formulas when the file is opened.
+- After saving, the app reopens the new file to confirm it's valid before you get it.
+- Bad files get a clear message instead of a crash: not an .xlsx file, an old .xls or password-protected file, an empty or damaged file, a file over 60 MB, or a file without `REF`. If you drop a bad file on top of a loaded one, the loaded file stays usable.
+- The Apply button can't run twice, and tasks never overlap.
 - Excel Tables (like the `Mail` table in `Sheet1`) and their formats are copied back from your original file after saving. The Excel library used here would otherwise damage them, and Excel would show a "Removed Records" repair prompt.
 
 ---
@@ -53,17 +52,16 @@ src/
     insertRows.js        Inserts rows at any position in REF + every employee sheet
     sheetCopy.js         Copies REF into a new sheet (values, styles, sizes, merges)
     employees.js         Creates employee sheets, validates IDs, reads employee lists
-    monthlyFill.js       Monthly fill: performance file -> stats rows (by label)
-    matcher.js           Suggests sheet -> process matches by name similarity
     preserve.js          Copies Excel Tables + table formats back after saving
     pipeline.js          analyzeStats() and applyChanges(): the one entry point
-  worker/excel.worker.js Runs the pipeline in a Web Worker (the page never freezes)
-  lib/excelWorker.js     Promise wrapper for the worker, download helper
-  components/            React UI (Processes, Employees, Monthly fill, Apply bar)
+  worker/excel.worker.js Runs the pipeline in a Web Worker (the page never freezes).
+                         Stateless: every task brings its own file bytes.
+  lib/excelWorker.js     Queued promise wrapper for the worker, file checks, download
+  components/            React UI (Processes, Employees, Apply bar)
   styles/app.css         Design tokens, light/dark theme, responsive layout
 ```
 
-**Data flow:** File → Web Worker (ExcelJS) → `analyzeStats` → the UI shows the structure. Your changes are kept as a list in the UI. **Apply** sends them to the worker, which runs `applyChanges` in a fixed order (insert rows → create employee sheets → monthly fill), saves the file, and sends it back for download.
+**Data flow:** File → Web Worker (ExcelJS) → `analyzeStats` → the UI shows the structure. Your changes are kept as a list in the UI. **Apply** sends the file and the changes to the worker. The worker runs `applyChanges` in a fixed order (insert rows → create employee sheets), saves the file, checks it, and sends it back for download. The page keeps the latest file, so the next run starts from it.
 
 **Stack:** React 19, Vite, ExcelJS, fflate (zip), Vitest. There is no backend.
 

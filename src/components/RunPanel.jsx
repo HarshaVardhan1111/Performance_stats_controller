@@ -1,14 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import Icon from './Icon.jsx';
-import { MONTHS } from './MonthlyFillTab.jsx';
 
 /** Sticky bottom bar: what will change + the Apply button + live progress. */
 export function ApplyBar({ counts, running, lastMessage, onApply, onReset }) {
-  const total = counts.inserts + counts.employees + (counts.fillMonth ? 1 : 0);
+  const total = counts.inserts + counts.employees;
   const parts = [];
   if (counts.inserts) parts.push(`${counts.inserts} row block${counts.inserts === 1 ? '' : 's'}`);
   if (counts.employees) parts.push(`${counts.employees} new sheet${counts.employees === 1 ? '' : 's'}`);
-  if (counts.fillMonth) parts.push(`${MONTHS[counts.fillMonth - 1]} fill`);
 
   return (
     <div className={`applybar ${running ? 'is-running' : ''}`}>
@@ -35,7 +33,7 @@ export function ApplyBar({ counts, running, lastMessage, onApply, onReset }) {
             </button>
           )}
           <button type="button" className="btn btn--primary btn--lg" onClick={onApply} disabled={running || !total}>
-            <Icon name="download" size={18} /> {running ? 'Applying…' : 'Apply & download'}
+            <Icon name="download" size={18} /> {running ? 'Working…' : 'Apply & download'}
           </button>
         </div>
       </div>
@@ -49,7 +47,6 @@ export function ResultCard({ result, onDownload, onDismiss }) {
   const lines = [];
   if (s.rowsAdded) lines.push(`${s.rowsAdded} row(s) inserted in every sheet${s.formulasUpdated ? `, ${s.formulasUpdated} formula(s) adjusted` : ''}`);
   if (s.sheetsCreated.length) lines.push(`${s.sheetsCreated.length} new employee sheet(s) created`);
-  if (s.cellsFilled) lines.push(`${s.cellsFilled.toLocaleString()} cell(s) filled`);
   return (
     <section className="card card--ok result" role="status">
       <div className="result__icon">
@@ -63,8 +60,6 @@ export function ResultCard({ result, onDownload, onDismiss }) {
           ))}
           {s.employeesSkipped.length > 0 && <li className="warn-text">{s.employeesSkipped.length} employee(s) skipped (already had a sheet)</li>}
           {s.sheetsSkipped.length > 0 && <li className="warn-text">{s.sheetsSkipped.length} sheet(s) skipped because their rows differ from REF: {s.sheetsSkipped.join(', ')}</li>}
-          {s.fillSkipped?.length > 0 && <li className="warn-text">Not filled (row not found): {s.fillSkipped.join(', ')}</li>}
-          {s.missing.length > 0 && <li className="warn-text">{s.missing.length} Emp ID(s) in the performance file had no sheet</li>}
         </ul>
         <p className="muted small">You can keep editing — the next run starts from this updated file.</p>
       </div>
